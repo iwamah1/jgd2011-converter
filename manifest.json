@@ -1,7 +1,7 @@
 {
     "name": "JGD2011 座標変換",
     "short_name": "JGD変換",
-    "start_url": "./index.html",
+    "start_url": "./",
     "display": "standalone",
     "background_color": "#0f172a",
     "theme_color": "#3b82f6",

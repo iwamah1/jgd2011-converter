@@ -1,6 +1,5 @@
-const CACHE_NAME = 'jgd2011-v1';
+const CACHE_NAME = 'jgd2011-v2';
 const ASSETS = [
-    './',
     './index.html',
     './style.css',
     './script.js',
