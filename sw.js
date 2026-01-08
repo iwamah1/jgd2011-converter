@@ -1,11 +1,10 @@
-const CACHE_NAME = 'jgd2011-v2';
+const CACHE_NAME = 'jgd2011-v3';
 const ASSETS = [
     './index.html',
     './style.css',
     './script.js',
     './manifest.json',
-    './icon.png',
-    './JPGEO2024.isg'
+    './icon.png'
 ];
 
 // Install Event: Cache all assets
