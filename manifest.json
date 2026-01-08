@@ -1,0 +1,16 @@
+{
+    "name": "JGD2011 座標変換",
+    "short_name": "JGD変換",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#0f172a",
+    "theme_color": "#3b82f6",
+    "description": "JGD2011平面直角座標をWGS84緯度経度に変換するアプリ（オフライン対応）",
+    "icons": [
+        {
+            "src": "icon.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
