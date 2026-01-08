@@ -43,6 +43,16 @@
             <!-- Manual Input Mode -->
             <div id="manual" class="tab-content active">
                 <div class="input-group">
+                    <label for="geoid-select">ジオイドモデル (Geoid Model)</label>
+                    <div class="select-wrapper">
+                        <select id="geoid-select">
+                            <option value="JPGEO2024" selected>JPGEO2024 (最新 / Default)</option>
+                            <option value="GSIGEO2011">GSIGEO2011 (Ver2.2)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="input-group">
                     <label for="system-select">系番号 (System Number)</label>
                     <select id="system-select">
                         <!-- Options 1-19 will be populated by JS or hardcoded -->
@@ -115,9 +125,8 @@
                             <a id="gsi-map-link" href="#" target="_blank" class="text-link">国土地理院地図で見る</a>
                         </div>
                     </div>
+                    <div id="map" class="map-container"></div>
                 </div>
-
-                <div id="map" class="map-container"></div>
             </div>
 
             <!-- CSV Batch Mode -->
@@ -130,10 +139,11 @@
 
                 <button id="csv-convert-btn" class="primary-btn" disabled>一括変換 (Batch Convert)</button>
 
+                <div class="action-bar" style="margin-top: 10px; justify-content: center;">
+                    <button id="download-kml" class="secondary-btn" disabled>KMLダウンロード (Download KML)</button>
+                </div>
+
                 <div id="csv-results-container" class="csv-results-container hidden">
-                    <div class="action-bar">
-                        <button id="download-kml" class="secondary-btn">KMLダウンロード</button>
-                    </div>
                     <div class="table-wrapper">
                         <table id="result-table">
                             <thead>
@@ -159,7 +169,7 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=4"></script>
 </body>
 
 </html>

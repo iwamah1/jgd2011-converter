@@ -139,16 +139,72 @@ function toDMS(deg) {
 }
 
 // Geoid Handling
-let isgGrid = null; // { latMin, latMax, lonMin, lonMax, dLat, dLon, data: [], cols, rows }
+let isgGrid = null;
+let ascGrid = null;
+let currentGeoidModel = 'JPGEO2024';
 
-async function fetchGeoidHeight(lat, lon) {
-    // 1. Try Local ISG
-    if (isgGrid) {
-        return getGeoidFromISG(lat, lon);
+async function calculateGeoidHeight(lat, lon) {
+    const modelSelect = document.getElementById('geoid-select');
+    const selectedModel = modelSelect ? modelSelect.value : 'JPGEO2024';
+
+    // Ensure data is loaded
+    if (selectedModel !== currentGeoidModel || (selectedModel === 'JPGEO2024' && !isgGrid) || (selectedModel === 'GSIGEO2011' && !ascGrid)) {
+        await loadGeoidData(selectedModel);
     }
 
-    // 2. API Integration omitted per request
-    return "ISGをインポートしてください";
+    if (selectedModel === 'GSIGEO2011') {
+        return getGeoidFromASC(lat, lon);
+    } else {
+        return getGeoidFromISG(lat, lon);
+    }
+}
+
+async function loadGeoidData(model = 'JPGEO2024') {
+    const statusEl = document.getElementById('isg-status');
+    const filename = model === 'GSIGEO2011' ? 'gsigeo2011_ver2_2.asc' : 'JPGEO2024.isg';
+
+    // Prevent reload if already loaded
+    if (model === 'GSIGEO2011' && ascGrid) {
+        currentGeoidModel = model;
+        statusEl.textContent = `読み込み完了 (${model})`;
+        statusEl.style.color = "#10b981";
+        return true;
+    }
+    if (model === 'JPGEO2024' && isgGrid) {
+        currentGeoidModel = model;
+        statusEl.textContent = `読み込み完了 (${model})`;
+        statusEl.style.color = "#10b981";
+        return true;
+    }
+
+    statusEl.textContent = `読み込み中 (${filename})...`;
+    statusEl.style.color = "#fbbf24";
+
+    try {
+        const response = await fetch(filename);
+        if (!response.ok) throw new Error("Network response was not ok");
+        const text = await response.text();
+
+        let success = false;
+        if (model === 'GSIGEO2011') {
+            success = parseASC(text);
+        } else {
+            success = parseISG(text);
+        }
+
+        if (success) {
+            statusEl.textContent = `読み込み完了 (${model})`;
+            statusEl.style.color = "#10b981";
+            currentGeoidModel = model;
+            return true;
+        }
+    } catch (error) {
+        console.error("Geoid Load Error:", error);
+        statusEl.textContent = `読み込み失敗 (${filename})`;
+        statusEl.style.color = "#ef4444";
+        return false;
+    }
+    return false;
 }
 
 // ISG Parser (ISG 2.0)
@@ -257,131 +313,237 @@ function getGeoidFromISG(lat, lon) {
     const v10 = g.data[r1 * g.cols + c0];
     const v11 = g.data[r1 * g.cols + c1];
 
-    // Check nodata
-    const nodata = g.nodata || -9999;
-    if (v00 === nodata || v01 === nodata || v10 === nodata || v11 === nodata) return "No Data";
+    if (v00 === g.nodata || v01 === g.nodata || v10 === g.nodata || v11 === g.nodata) return "データなし";
 
     // Weights
-    const wr = row - r0;
-    const wc = col - c0;
+    const t = row - r0; // Vertical weight (0 at r0, 1 at r1)
+    const u = col - c0; // Horizontal weight (0 at c0, 1 at c1)
 
-    const val = (1 - wr) * ((1 - wc) * v00 + wc * v01) +
-        wr * ((1 - wc) * v10 + wc * v11);
+    // Interpolate
+    // Row r0 (Top if NorthUp)
+    const h_row0 = (1 - u) * v00 + u * v01;
+    // Row r1 (Bottom if NorthUp)
+    const h_row1 = (1 - u) * v10 + u * v11;
 
-    return val.toFixed(3) + " m";
+    // Interpolate vertically
+    const h = (1 - t) * h_row0 + t * h_row1;
+
+    return h.toFixed(3) + " m";
 }
 
-// UI Initialization
-function init() {
-    // Auto-load JPGEO2024.isg
-    fetch('./JPGEO2024.isg')
-        .then(res => {
-            if (res.ok) return res.text();
-            throw new Error('Not found');
-        })
-        .then(text => {
-            if (parseISG(text)) {
-                document.getElementById('isg-status').textContent = "読み込み完了 (Auto)";
+// Parse GSIGEO2011 ASC Format
+function parseASC(text) {
+    try {
+        const lines = text.trim().split(/\r?\n/);
+        // Header: 20.00000 120.00000 0.016667 0.025000 1801 1201 1 ver2.2
+        const headerParts = lines[0].trim().split(/\s+/);
+        if (headerParts.length < 6) throw new Error("Invalid ASC Header");
+
+        const minLat = parseFloat(headerParts[0]); // 20.0
+        const minLon = parseFloat(headerParts[1]); // 120.0
+        const dLat = parseFloat(headerParts[2]);
+        const dLon = parseFloat(headerParts[3]);
+        const nLat = parseInt(headerParts[4]); // 1801 Rows
+        const nLon = parseInt(headerParts[5]); // 1201 Cols
+
+        // Data Start
+        const gridData = new Float32Array(nLat * nLon);
+        let dataIndex = 0;
+
+        // Skip header line
+        for (let i = 1; i < lines.length; i++) {
+            const rowStr = lines[i].trim();
+            if (!rowStr) continue;
+            const nums = rowStr.split(/\s+/);
+            for (let j = 0; j < nums.length; j++) {
+                gridData[dataIndex++] = parseFloat(nums[j]);
             }
-        })
-        .catch(err => {
-            console.log("Auto-load failed (likely local file):", err);
-        });
-
-    // Tab Switching
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            tabContents.forEach(c => c.classList.remove('active'));
-            tab.classList.add('active');
-            document.getElementById(tab.dataset.tab).classList.add('active');
-
-            if (tab.dataset.tab === 'manual' && map) {
-                setTimeout(() => map.invalidateSize(), 100);
-            }
-        });
-    });
-
-    // ISG File Input
-    document.getElementById('isg-file').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            parseISG(ev.target.result);
-        };
-        reader.readAsText(file);
-    });
-
-    // Manual Convert
-    document.getElementById('convert-btn').addEventListener('click', async () => {
-        const sys = parseInt(document.getElementById('system-select').value);
-        const x = parseFloat(document.getElementById('input-x').value);
-        const y = parseFloat(document.getElementById('input-y').value);
-
-        if (isNaN(x) || isNaN(y)) {
-            alert('座標を正しく入力してください');
-            return;
         }
 
-        const result = convertToLatLon(sys, x, y);
-        if (result) {
-            document.getElementById('result-area').classList.remove('hidden');
-            document.getElementById('res-lat').textContent = result.lat.toFixed(8);
-            document.getElementById('res-lon').textContent = result.lon.toFixed(8);
-            document.getElementById('res-lat-dms').textContent = toDMS(result.lat);
-            document.getElementById('res-lon-dms').textContent = toDMS(result.lon);
-            document.getElementById('gsi-map-link').href = `https://maps.gsi.go.jp/#15/${result.lat}/${result.lon}/`;
+        ascGrid = {
+            minLat, minLon, dLat, dLon, nLat, nLon,
+            maxLat: minLat + (nLat - 1) * dLat,
+            maxLon: minLon + (nLon - 1) * dLon,
+            data: gridData,
+            nodata: 999.0
+        };
 
-            // Geoid
-            fetchGeoidHeight(result.lat, result.lon).then(h => {
-                if (typeof h === 'number') {
-                    document.getElementById('res-geoid').textContent = h.toFixed(4) + " m";
-                } else {
-                    document.getElementById('res-geoid').textContent = h;
-                }
-            });
+        console.log("GSIGEO2011 Loaded:", { nLat, nLon, size: dataIndex });
+        return true;
+    } catch (e) {
+        console.error("ASC Parse Error:", e);
+        return false;
+    }
+}
 
-            // Map
-            if (!map) {
-                map = L.map('map').setView([result.lat, result.lon], 15);
-                L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
-                    attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
-                }).addTo(map);
-            } else {
-                map.setView([result.lat, result.lon], 15);
-            }
+function getGeoidFromASC(lat, lon) {
+    if (!ascGrid) return null;
+    const g = ascGrid;
 
+    if (lat < g.minLat || lat > g.maxLat || lon < g.minLon || lon > g.maxLon) return "範囲外";
+
+    // Indices (South to North, West to East)
+    const row = (lat - g.minLat) / g.dLat;
+    const col = (lon - g.minLon) / g.dLon;
+
+    const r0 = Math.floor(row);
+    const r1 = r0 + 1;
+    const c0 = Math.floor(col);
+    const c1 = c0 + 1;
+
+    // Check boundary
+    if (r1 >= g.nLat || c1 >= g.nLon) return "範囲外";
+
+    // In S-to-N array: Index = r * nLon + c
+    // v00 = (r0, c0) = (LowLat, LowLon) = SW (South-West)
+    // v01 = (r0, c1) = (LowLat, HighLon) = SE (South-East)
+    // v10 = (r1, c0) = (HighLat, LowLon) = NW (North-West)
+    // v11 = (r1, c1) = (HighLat, HighLon) = NE (North-East)
+
+    const v00 = g.data[r0 * g.nLon + c0];
+    const v01 = g.data[r0 * g.nLon + c1];
+    const v10 = g.data[r1 * g.nLon + c0];
+    const v11 = g.data[r1 * g.nLon + c1];
+
+    if (v00 >= 990 || v01 >= 990 || v10 >= 990 || v11 >= 990) return "データなし";
+
+    // Bilinear Interpolation
+    // t (Phi direction): 0 at r0 (South), 1 at r1 (North)
+    // u (Lambda direction): 0 at c0 (West), 1 at c1 (East)
+    const t = row - r0;
+    const u = col - c0;
+
+    const h = (1 - t) * (1 - u) * v00 +
+        (1 - t) * u * v01 +
+        t * (1 - u) * v10 +
+        t * u * v11;
+
+    return h.toFixed(3) + " m";
+}
+
+
+// UI Initialization
+
+
+// Manual Conversion (Named function)
+async function convert() {
+    const sys = parseInt(document.getElementById('system-select').value);
+    const x = parseFloat(document.getElementById('input-x').value);
+    const y = parseFloat(document.getElementById('input-y').value);
+
+    if (isNaN(x) || isNaN(y)) {
+        alert('座標を正しく入力してください');
+        return;
+    }
+
+    const result = convertToLatLon(sys, x, y);
+    if (result) {
+        document.getElementById('result-area').classList.remove('hidden');
+        document.getElementById('res-lat').textContent = result.lat.toFixed(8);
+        document.getElementById('res-lon').textContent = result.lon.toFixed(8);
+        document.getElementById('res-lat-dms').textContent = toDMS(result.lat);
+        document.getElementById('res-lon-dms').textContent = toDMS(result.lon);
+
+        const mapLink = document.getElementById('gsi-map-link');
+        if (mapLink) {
+            mapLink.href = `https://maps.gsi.go.jp/#15/${result.lat}/${result.lon}/`;
+        }
+
+        // Update Leaflet Map
+        if (map) {
             if (currentMarker) map.removeLayer(currentMarker);
+            map.setView([result.lat, result.lon], 15);
             currentMarker = L.marker([result.lat, result.lon]).addTo(map)
                 .bindPopup(`緯度: ${result.lat.toFixed(5)}<br>経度: ${result.lon.toFixed(5)}`)
                 .openPopup();
+            // Delay to ensure container is visible
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 100);
         }
+
+        // Geoid Calculation
+        const geoidVal = await calculateGeoidHeight(result.lat, result.lon);
+
+        const geoidEl = document.getElementById('res-geoid');
+        if (geoidEl) {
+            geoidEl.textContent = geoidVal;
+        }
+    }
+}
+
+function init() {
+    // Auto-load default geoid (JPGEO2024)
+    loadGeoidData('JPGEO2024');
+
+    // Initialize Map
+    if (document.getElementById('map')) {
+        map = L.map('map').setView([35.681236, 139.767125], 5);
+        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
+        }).addTo(map);
+    }
+
+    document.getElementById('convert-btn').addEventListener('click', convert);
+
+    // Geoid Switch Listener
+    document.getElementById('geoid-select').addEventListener('change', (e) => {
+        loadGeoidData(e.target.value);
+    });
+
+    // Manual ISG File Input
+    const isgInput = document.getElementById('isg-file');
+    if (isgInput) {
+        isgInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                parseISG(ev.target.result);
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(btn.dataset.tab).classList.add('active');
+
+            // Refresh map if switching to manual tab
+            if (btn.dataset.tab === 'manual' && map) {
+                setTimeout(() => map.invalidateSize(), 100);
+            }
+        });
     });
 
     // CSV Handling
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('csv-file');
 
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#3b82f6';
-        dropZone.style.background = 'rgba(59, 130, 246, 0.1)';
-    });
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.style.borderColor = 'rgba(255,255,255,0.1)';
-        dropZone.style.background = 'transparent';
-    });
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = 'rgba(255,255,255,0.1)';
-        dropZone.style.background = 'transparent';
-        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-    });
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length) handleFile(e.target.files[0]);
-    });
+    if (dropZone && fileInput) {
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '#3b82f6';
+            dropZone.style.background = 'rgba(59, 130, 246, 0.1)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'rgba(255,255,255,0.1)';
+            dropZone.style.background = 'transparent';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'rgba(255,255,255,0.1)';
+            dropZone.style.background = 'transparent';
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+    }
 
     let csvData = [];
 
@@ -392,7 +554,6 @@ function init() {
         const reader = new FileReader();
         reader.onload = (e) => {
             const text = e.target.result;
-            // Simple parsing: split by line, then comma
             const lines = text.split(/\r\n|\n/).filter(l => l.trim());
             csvData = lines.map(line => {
                 const parts = line.split(',');
@@ -405,70 +566,71 @@ function init() {
         reader.readAsText(file);
     }
 
-    document.getElementById('csv-convert-btn').addEventListener('click', async () => {
-        const sys = parseInt(document.getElementById('system-select').value);
-        const tbody = document.querySelector('#result-table tbody');
-        tbody.innerHTML = '';
-        document.getElementById('csv-results-container').classList.remove('hidden');
+    const csvBtn = document.getElementById('csv-convert-btn');
+    if (csvBtn) {
+        csvBtn.addEventListener('click', async () => {
+            const sys = parseInt(document.getElementById('system-select').value);
+            const tbody = document.querySelector('#result-table tbody');
+            tbody.innerHTML = '';
+            document.getElementById('csv-results-container').classList.remove('hidden');
+            const kmlBtn = document.getElementById('download-kml');
+            if (kmlBtn) kmlBtn.disabled = false;
 
-        // Process all
-        for (let i = 0; i < csvData.length; i++) {
-            const item = csvData[i];
-            const res = convertToLatLon(sys, item.x, item.y);
+            for (let i = 0; i < csvData.length; i++) {
+                const item = csvData[i];
+                const res = convertToLatLon(sys, item.x, item.y);
 
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>${item.name}</td>
-                <td>${res.lat.toFixed(8)}</td>
-                <td>${res.lon.toFixed(8)}</td>
-                <td>${toDMS(res.lat)}</td>
-                <td>${toDMS(res.lon)}</td>
-                <td id="geoid-${i}">...</td>
-            `;
-            tbody.appendChild(tr);
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${item.name}</td>
+                    <td>${res.lat.toFixed(8)}</td>
+                    <td>${res.lon.toFixed(8)}</td>
+                    <td>${toDMS(res.lat)}</td>
+                    <td>${toDMS(res.lon)}</td>
+                    <td id="geoid-${i}">...</td>
+                `;
+                tbody.appendChild(tr);
 
-            // Fetch Geoid
-            const geoidVal = await fetchGeoidHeight(res.lat, res.lon);
-            document.getElementById(`geoid-${i}`).textContent = geoidVal;
-        }
-    });
+                const geoidVal = await calculateGeoidHeight(res.lat, res.lon);
+                document.getElementById(`geoid-${i}`).textContent = geoidVal;
+            }
+        });
+    }
 
     // KML Download
-    document.getElementById('download-kml').addEventListener('click', () => {
-        if (csvData.length === 0) return;
-
-        const sys = parseInt(document.getElementById('system-select').value);
-
-        let kml = `<?xml version="1.0" encoding="UTF-8"?>
+    const kmlBtn = document.getElementById('download-kml');
+    if (kmlBtn) {
+        kmlBtn.addEventListener('click', () => {
+            if (csvData.length === 0) return;
+            const sys = parseInt(document.getElementById('system-select').value);
+            let kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>JGD2011 Conversion Results</name>
 `;
-        csvData.forEach(item => {
-            const res = convertToLatLon(sys, item.x, item.y);
-            kml += `    <Placemark>
+            csvData.forEach(item => {
+                const res = convertToLatLon(sys, item.x, item.y);
+                kml += `    <Placemark>
       <name>${item.name}</name>
       <Point>
         <coordinates>${res.lon},${res.lat},0</coordinates>
       </Point>
     </Placemark>
 `;
-        });
-        kml += `  </Document>
+            });
+            kml += `  </Document>
 </kml>`;
-
-        const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'results.kml';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    });
+            const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'results.kml';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+    }
 }
-
-init();
 
 // PWA Service Worker Registration
 if ('serviceWorker' in navigator) {
@@ -478,3 +640,6 @@ if ('serviceWorker' in navigator) {
             .catch(err => console.log('Service Worker Registration Failed:', err));
     });
 }
+
+// Start App
+init();
