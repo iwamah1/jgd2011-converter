@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JGD2011 座標変換 (JGD2011 Converter)</title>
+    <!-- Google Fonts for Premium Feel -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>JGD2011 座標変換</h1>
+            <p class="subtitle">Premium Coordinate Converter</p>
+        </header>
+
+        <div class="glass-panel">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="manual">手入力モード</button>
+                <button class="tab-btn" data-tab="csv">CSV一括モード</button>
+            </div>
+
+            <!-- Manual Input Mode -->
+            <div id="manual" class="tab-content active">
+                <div class="input-group">
+                    <label for="system-select">系番号 (System Number)</label>
+                    <select id="system-select">
+                        <!-- Options 1-19 will be populated by JS or hardcoded -->
+                        <option value="1">1系 (長崎・鹿児島)</option>
+                        <option value="2">2系 (福岡・佐賀・熊本・大分・宮崎・鹿児島)</option>
+                        <option value="3">3系 (山口・島根・広島)</option>
+                        <option value="4">4系 (香川・愛媛・徳島・高知)</option>
+                        <option value="5">5系 (兵庫・鳥取・岡山)</option>
+                        <option value="6">6系 (京都・大阪・福井・滋賀・三重・奈良・和歌山)</option>
+                        <option value="7">7系 (石川・富山・岐阜・愛知)</option>
+                        <option value="8">8系 (新潟・長野・山梨・静岡)</option>
+                        <option value="9" selected>9系 (東京・福島・栃木・茨城・埼玉・千葉・群馬・神奈川)</option>
+                        <option value="10">10系 (青森・秋田・山形・岩手・宮城)</option>
+                        <option value="11">11系 (北海道西部)</option>
+                        <option value="12">12系 (北海道中部)</option>
+                        <option value="13">13系 (北海道東部)</option>
+                        <option value="14">14系 (小笠原諸島)</option>
+                        <option value="15">15系 (沖縄本島)</option>
+                        <option value="16">16系 (宮古島)</option>
+                        <option value="17">17系 (石垣島)</option>
+                        <option value="18">18系 (沖ノ鳥島)</option>
+                        <option value="19">19系 (南鳥島)</option>
+                    </select>
+                </div>
+
+                <div class="coordinates-input">
+                    <div class="input-group">
+                        <label for="input-x">X座標 (North-South)</label>
+                        <input type="number" id="input-x" placeholder="-3000.000" step="0.001">
+                    </div>
+                    <div class="input-group">
+                        <label for="input-y">Y座標 (East-West)</label>
+                        <input type="number" id="input-y" placeholder="-5000.000" step="0.001">
+                    </div>
+                </div>
+
+                <button id="convert-btn" class="primary-btn">変換 (Convert)</button>
+
+                <div id="result-area" class="result-area hidden">
+                    <h3>変換結果</h3>
+                    <div class="result-card">
+                        <div class="result-item">
+                            <span class="label">緯度 (10進数)</span>
+                            <span id="res-lat" class="value">-</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="label">経度 (10進数)</span>
+                            <span id="res-lon" class="value">-</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="label">緯度 (60進数)</span>
+                            <span id="res-lat-dms" class="value">-</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="label">経度 (60進数)</span>
+                            <span id="res-lon-dms" class="value">-</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="label">ジオイド高 (Geoid Height)</span>
+                            <span id="res-geoid" class="value">-</span>
+                        </div>
+                        <div class="result-item full-width">
+                            <div class="geoid-actions">
+                                <label for="isg-file" class="secondary-btn small-btn">ISGファイル(JPGEO2024)をインポート</label>
+                                <input type="file" id="isg-file" accept=".isg,.txt" hidden>
+                                <span id="isg-status" class="status-text">未ロード</span>
+                            </div>
+                        </div>
+                        <div class="result-item full-width">
+                            <a id="gsi-map-link" href="#" target="_blank" class="text-link">国土地理院地図で見る</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="map" class="map-container"></div>
+            </div>
+
+            <!-- CSV Batch Mode -->
+            <div id="csv" class="tab-content">
+                <div class="upload-area" id="drop-zone">
+                    <p>CSVファイルをここにドロップ または クリックして選択</p>
+                    <input type="file" id="csv-file" accept=".csv" hidden>
+                    <p class="small-text">形式: 名称, X座標, Y座標 (ヘッダーなし)</p>
+                </div>
+
+                <button id="csv-convert-btn" class="primary-btn" disabled>一括変換 (Batch Convert)</button>
+
+                <div id="csv-results-container" class="csv-results-container hidden">
+                    <div class="action-bar">
+                        <button id="download-kml" class="secondary-btn">KMLダウンロード</button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table id="result-table">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>緯度(10)</th>
+                                    <th>経度(10)</th>
+                                    <th>緯度(60)</th>
+                                    <th>経度(60)</th>
+                                    <th>ジオイド高</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rows generated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
